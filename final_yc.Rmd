@@ -1,0 +1,242 @@
+---
+title: "hw4_yc"
+author: "yao chen"
+date: "4/16/2022"
+output: html_document
+---
+
+```{}
+SingelCellRNAseq
+Manpreet S. Katari
+8/9/2021
+Single Cell RNA-seq Workflow using Seurat
+For this assignment we will analyze a publicly available scRNA-seq dataset using Seurat, a popular R package for analyzing scRNA-seq. There are several different workflows included in the package, but for now we will focus on clustering the cells based on gene expression. We will follow the worflow provided here Seurat - Guided Clustering Tutorial
+
+There are two main goals of this assignment:
+
+How many different cell types do we have in our dataset?
+Which genes are useful in identifying one cell type from another.
+The dataset we will be using is from a dataset looking at pancreatic ductal adenocarcinoma GSE111672. The study looks at two different samples, however for this assignment, we will only focus on one.
+
+Moncada R, Barkley D, Wagner F, Chiodin M et al. Integrating microarray-based spatial transcriptomics and single-cell RNA-seq reveals tissue architecture in pancreatic ductal adenocarcinomas. Nat Biotechnol 2020 Mar;38(3):333-342. PMID: 31932730
+
+```
+
+```{r}
+#Loading the data
+#Step 0: Please install and load the following packages
+#install.packages("dplyr")
+library(dplyr)
+
+## 
+## Attaching package: 'dplyr'
+## The following objects are masked from 'package:stats':
+## 
+##     filter, lag
+## The following objects are masked from 'package:base':
+## 
+##     intersect, setdiff, setequal, union
+#install.packages("Seurat")
+library(Seurat)
+## Attaching SeuratObject
+#install.packages("patchwork")
+library(patchwork)
+```
+```{}
+Step 1: Load the TSV file
+```
+```{r}
+scrna<-read.table("rnaseq.txt",header=T,sep="\t",row.names=1)
+# BiocManager::install("EnsDb.Hsapiens.v86")
+# library(EnsDb.Hsapiens.v86)
+# ensembl.genes <- row.names(scrna)
+# geneidf <- ensembldb::select(EnsDb.Hsapiens.v86, keys= row.names(scrna), keytype = "GENEID", columns = c("SYMBOL","GENEID"))
+# row.names(geneidf)<-geneidf$SYMBOL
+# degeneidf<-matrix()
+# for( i in geneidf$SYMBOL){
+#   if(!(i %in% degeneidf$SYMBOL)){
+#     degeneidf<-rbind(degeneidf,i)
+#   }
+# }
+
+#degeneidf<-rbind(degeneidf,geneidf[CITED4,])
+# scrna1<-scrna[geneid$GENEID,]
+# scrna1$symbol<-geneid$SYMBOL
+# scrna2<-unique.data.frame(scrna1, by = "symbol")
+# row.names(scrna2)<-scrna2$symbol
+
+```
+
+```{}
+Step 2: Create a Seurat object.
+Call the object pdac1. You set the project argument in the CreateSeuratObject the same. Here we will also request the same criteria as mentioned in the workflow: min.cells=3 and min.features=200.
+```
+```{r}
+#install.packages("Seurat")
+#library(Seurat)
+pdac2<-CreateSeuratObject(counts = scrna, project = "pdac2", min.cells = 30,min.features = 400)
+```
+
+```{}
+Quality control
+Step 3: Label the Mitochondrial genes
+We don’t want to use cells that have too many mitochondrial genes, so we create a new column to help us summarize how many mitochondrial genes were identified in the different cells.
+```
+```{}
+pdac2[["percent.mt"]] <- PercentageFeatureSet(object = pdac2, pattern = "^MT-")
+```
+
+```{}
+Step 4: Visualize the distribution
+Use the VlnPlot function to view the number of counts, number of features, and the percent mitochondrial genes.
+```
+
+```{}
+
+VlnPlot(object = pdac2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(object = pdac2, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(object = pdac2, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+CombinePlots(plots = list(plot1, plot2))
+```
+```{}
+Step 5: Filter data
+Only keep the cells that have greater than 200 and less than 2500 unique features and the percent mitochondrial genes is less than 5.
+```
+```{r}
+pdac2 <- subset(x = pdac2, subset = nFeature_RNA > 300 & nFeature_RNA < 10000)
+```
+
+```{}
+Normalization
+Step 6: Normalize data
+Taking the log of the data, makes the data more normal distributed. Normalize data using the LogNormaliza method with a scale factor of 10,000
+```
+```{r}
+pdac2 <- NormalizeData(object = pdac2, normalization.method = "LogNormalize", scale.factor = 10000)
+
+pdac2 <- NormalizeData(object = pdac2)
+```
+```{}
+Step 6: Calculate gene variation
+Find the 2000 most variable genes using the FindVariableFeatures command using the vst method.
+```
+```{r}
+pdac2 <- FindVariableFeatures(object = pdac2, selection.method = "vst", nfeatures = 2000)
+# ?FindVariableFeatures
+
+```
+```{}
+PCA
+Step 7: Scale data
+Scaling the data normalizes the standard deviation and centers the data. This is an important step before performing PCA.
+```
+```{r}
+all.genes <- rownames(x = pdac2)
+pdac2 <- ScaleData(object = pdac2, features = all.genes)
+```
+```{}
+Step 8: PCA
+Run PCA
+```
+```{r}
+pdac2 <- RunPCA(object = pdac2, features = VariableFeatures(object = pdac2))
+#print(x = pdac2[["pca"]], dims = 1:5, nfeatures = 5)
+```
+```{}
+Step 9: Visualize data using VizDimLoadings and DimPlot functions. Can you tell from the PCA analyis, the number of cell types that are present?
+```
+```{r}
+VizDimLoadings(object = pdac2, dims = 1:2, reduction = "pca")
+DimPlot(object = pdac2, reduction = "pca")
+#4 cell types
+```
+```{}
+Step 10: PCA heatmaps
+Another way to visualize the variation explained by the PC is creating heatmaps. Create heatmaps of the first 10 dimensions and include 200 cells.
+```
+
+```{}
+DimHeatmap(object = pdac2, dims = 1, cells = 200, balanced = TRUE)
+DimHeatmap(object = pdac2, dims = 1:10, cells = 200, balanced = TRUE)
+```
+```{}
+Step 11: Dimensionality
+To make this more quantitative, let’s see when does the variation reach the lowest amount of variation explained. Use the JackStraw method with 100 replicates and score the first 20 dimensions.
+```
+```{r}
+pdac2 <- JackStraw(object = pdac2,num.replicate = 100) 
+pdac2 <- ScoreJackStraw(object = pdac2, dims = 1:20)
+```
+```{}
+Plot the results for the first 20 dimensions.
+```
+```{r}
+JackStrawPlot(object = pdac2, dims = 1:20)
+```
+```{}
+Use the elbow plot
+```
+```{r}
+ElbowPlot(object = pdac2)
+```
+
+```{}
+Step 12: Clustering.
+Now we will group together the cells based on where they are located in the different dimensions. Use the FindNeighbors function using the first 9 dimensions.
+
+And then identify the clusters usng the FindClusters function.
+```
+```{r}
+pdac2 <- FindNeighbors(object = pdac2, dims = 10)
+pdac2 <- FindClusters(object = pdac2, resolution = 0.8)
+#?FindClusters
+#head(x = Idents(object = pdac2), 5)
+```
+```{}
+tsne/umap
+Step 13: Perform a UMAP analysis using the first 9 dimensions using RunUMAP and then visualize it using DimPlot.
+```
+
+```{r}
+pdac2 <- RunUMAP(object = pdac2, dims = 1:9)
+DimPlot(object = pdac2, reduction = "umap")
+#How many clusters do you get? How many possible mistakes do you see?
+#4 clusters. 1 mistake, purple and right side of green is the same cluster
+# BiocManager::install("M3C")
+# library("M3C")
+# tsne(pdac2.markers,labels = FALSE, perplex = 2, printres = FALSE,
+#   seed = FALSE, axistextsize = 18, legendtextsize = 18,
+#   dotsize = 5, textlabelsize = 4, legendtitle = "Group",
+#   controlscale = FALSE, scale = 1, low = "grey", high = "red",
+#   colvec = c("skyblue", "gold", "violet", "darkorchid", "slateblue",
+#   "forestgreen", "violetred", "orange", "midnightblue", "grey31", "black"),
+#   printheight = 20, printwidth = 22, text = FALSE)
+?tsne
+```
+
+```{}
+Step 14: Identify the markers that compare each cluster agains all. Report only positively markers. Use the FindAllMarkers for this.
+```
+```{r}
+#library(dplyr)
+pdac2.markers <- FindAllMarkers(object = pdac2, only.pos = TRUE, min.pct = 0.50, logfc.threshold = 1.0,)
+#?FindAllMarkers
+pdac2.markers %>% 
+  group_by(cluster) %>% 
+  slice_max(n = 30, order_by = avg_log2FC)
+```
+```{}
+Step 15: Create a violin plot using one feature from each cluster.
+```
+```{}
+VlnPlot(object = pdac2, features = c("ENSG00000205777","ENSG00000147381","ENSG00000165092","ENSG00000163739","ENSG00000116741","ENSG00000146674","ENSG00000108244","	ENSG00000163739","ENSG00000164458","ENSG00000171209","ENSG00000118849","ENSG00000205426","ENSG00000111906"),slot = "counts", log = TRUE)
+
+```
+```{}
+Step 16: Create a feature plot using the same features as before.
+```
+```{}
+FeaturePlot(object = pdac2, features = c("ENSG00000205777","ENSG00000147381","ENSG00000165092","ENSG00000163739","ENSG00000116741","ENSG00000146674","ENSG00000108244","	ENSG00000163739","ENSG00000164458","ENSG00000171209","ENSG00000118849","ENSG00000205426","ENSG00000111906"))
+
+geneidf <- ensembldb::select(EnsDb.Hsapiens.v86, keys= c("ENSG00000205777","ENSG00000147381","ENSG00000165092","ENSG00000163739","ENSG00000116741","ENSG00000146674","ENSG00000108244","	ENSG00000163739","ENSG00000164458","ENSG00000171209","ENSG00000118849","ENSG00000205426","ENSG00000111906","ENSG00000181617","ENSG00000019582","ENSG00000205426","ENSG00000165092","ENSG00000147010","	ENSG00000163930"), keytype = "GENEID", columns = c("SYMBOL","GENEID"))
+```

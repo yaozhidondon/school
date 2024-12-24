@@ -1,0 +1,277 @@
+---
+title: "TR_FP_LZY"
+author: "lzy"
+date: "2022/3/3"
+output: html_document
+---
+```{r}
+#BiocManager::install("org.Hs.eg.db")
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(org.Hs.eg.db)
+library(GEOquery)
+library(dplyr)
+```
+
+```{r Loading the data}
+#gse<-getGEO('GSE183590')
+raw_df=read.table("GSE183590_Read_count_matrix_05092021.txt",header=T,sep="\t",row.names=1)
+rowname_raw_df=rownames(raw_df)
+list=select(org.Hs.eg.db,keys=rowname_raw_df,columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+list$uniSYMBOL=make.unique(list$SYMBOL,sep='-')
+list=list[!duplicated(list$ENSEMBL),]
+list$uniSYMBOL[is.na(list$uniSYMBOL)]='NA'
+# raw_df1=raw_df
+row.names(raw_df)=list$uniSYMBOL
+# A549=raw_df[,c(1:391)]
+# H460=raw_df[,c(392:774)]
+# H1299=raw_df[,c(775:1102)]
+# Calu3=raw_df[,c(1103:1456)]
+?select
+```
+
+```{r}
+sclc<-CreateSeuratObject(counts = raw_df, project = "sclc", min.cells = 100,min.features = 1000)
+head(sclc$RNA@data[,1:5])
+
+```
+
+```{r main body}
+sclc[["percent.mt"]] <- PercentageFeatureSet(object = sclc, pattern = "^MT")
+
+VlnPlot(object = sclc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+p1=FeatureScatter(object = sclc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+p2=FeatureScatter(object = sclc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+p1+p2
+
+sclc <- subset(x = sclc, subset = nFeature_RNA > 3000 & nFeature_RNA < 10000 & percent.mt < 5)
+sclc <- NormalizeData(object = sclc, normalization.method = "LogNormalize", scale.factor = 10000)
+sclc <- NormalizeData(object = sclc)
+sclc <- FindVariableFeatures(object = sclc, selection.method = "vst", nfeatures = 1000)
+top10 <- head(x = VariableFeatures(object = sclc), 10)
+plot1 <- VariableFeaturePlot(object = sclc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1
+plot2
+all.genes <- rownames(x = sclc)
+sclc <- ScaleData(object = sclc, features = all.genes)
+sclc <- RunPCA(object = sclc, features = VariableFeatures(object = sclc))
+print(x = sclc[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(object = sclc, dims = 1:2, reduction = "pca")
+DimPlot(object = sclc, reduction = "pca")
+DimHeatmap(object = sclc, dims = 1:5, cells = 1000, balanced = TRUE)
+sclc <- JackStraw(object = sclc,num.replicate = 100) 
+sclc <- ScoreJackStraw(object = sclc, dims = 1:10)
+JackStrawPlot(object = sclc, dims = 1:10)
+ElbowPlot(object = sclc)
+sclc <- FindNeighbors(object = sclc, dims = 1:9)
+sclc <- FindClusters(object = sclc, resolution = 0.8)
+head(x = Idents(object = sclc), 5)
+
+sclc <- RunUMAP(object = sclc, dims = 1:10)
+DimPlot(object = sclc, reduction = "umap")
+new.cluster.ids =c('A549','H1299','A549.','H460','Calu3','H1299.','H460.','Calu3.','H1299..')
+col5a2=
+names(new.cluster.ids) <- levels(sclc)
+sclc <- RenameIdents(sclc, new.cluster.ids)
+DimPlot(sclc, reduction = "umap", label = T, pt.size = 0.5) + NoLegend()
+
+sclc.markers <- FindAllMarkers(object = sclc, only.pos = F, min.pct = 0.5, logfc.threshold = 0.8)
+sclc_marker_table=sclc.markers %>% 
+  group_by(cluster) %>% 
+  slice_max(n = 50, order_by = abs(avg_log2FC))
+sclc_marker_table$gene
+VlnPlot(object = sclc, features = c("CXCL1","CXCL2"),slot = "counts", log = TRUE)
+FeaturePlot(object = sclc, features = c("CXCL1","CXCL2","COL5A2","ABCC2","CDKN2A","CXCR2","CD74"))
+DimPlot(object = sclc, reduction = "umap")
+
+cluster8.markers <- FindMarkers(sclc, ident.1 ="." , ident.2 = c('A549','H1299','A549.','H460','Calu3','H1299.','H460.','Calu3.'), min.pct = 0.55)
+head(cluster8.markers, n = 5)
+
+# sclc_raw_df=sclc
+```
+
+```{r gene name}
+
+# list=select(org.Hs.eg.db,keys=sclc_marker_table$gene,columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+# universeGeneIds=select(org.Hs.eg.db,keys=rownames(raw_df),columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+
+```
+
+
+```{r GO annotation}
+install.packages("GOstats")
+# library(GOstats)
+# library(GO.db)
+# library(Category)
+BiocManager::install("clusterProfiler")
+library(clusterProfiler)
+geneIds = bitr(unique(sclc_marker_table$gene), fromType = "SYMBOL",
+            toType = c( "ENTREZID"),
+            OrgDb = org.Hs.eg.db)
+
+universeGeneIds=bitr(unique(list$ENSEMBL), fromType = "ENSEMBL",
+            toType = c( "ENTREZID"),
+            OrgDb = org.Hs.eg.db)
+# goanno=function(geneIds,universeGeneIds,ontonum){
+#   ontology_term=c('BP','CC','MF')
+#   new("GOHyperGParams",
+#            geneIds=geneIds,
+#            universeGeneIds=universeGeneIds,
+#            annotation='org.Hs.eg',
+#            ontology=ontology_term[ontonum],
+#            pvalueCutoff=0.001,
+#            testDirection="over")%>%
+#     hyperGTest()%>%
+#     summary()
+# }
+# 
+# sclc.BP=goanno(geneIds = geneIds$ENTREZID,
+#             universeGeneIds = universeGeneIds$ENTREZID,
+#             ontonum = 1)
+# sclc.CC=goanno(geneIds = geneIds$ENTREZID,
+#             universeGeneIds = universeGeneIds$ENTREZID,
+#             ontonum = 2)
+# sclc.MF=goanno(geneIds = geneIds$ENTREZID,
+#             universeGeneIds = universeGeneIds$ENTREZID,
+#             ontonum = 3)
+# 
+
+sclc_BP <- enrichGO(gene = geneIds$ENTREZID,
+                   OrgDb=org.Hs.eg.db,
+                   ont = "BP",
+                   pAdjustMethod = "BH",
+                   minGSSize = 1,
+                   pvalueCutoff = 0.01,
+                   qvalueCutoff = 0.01,
+                   readable = T)
+write.csv(as.data.frame(sclc_BP@result), file="sclc_BP.csv")
+barplot(sclc_BP, showCategory=15,title="EnrichmentGO_sclc_BP")
+
+library(enrichplot)
+# library(DOSE)
+# data(geneList)
+# de <- names(geneList)[abs(geneList) > 2]
+# edo <- enrichDGN(de)
+
+edox = setReadable(sclc_BP, 'org.Hs.eg.db', 'ENTREZID')
+cnetplot(edox, circular = TRUE, colorEdge = TRUE,showCategory = 6)
+
+```
+
+```{r KEGG enrichment}
+
+
+sclc_kegg <- enrichKEGG(gene = geneIds$ENTREZID,
+                 organism ="human",
+                 pvalueCutoff = 0.01,
+                 qvalueCutoff = 0.01,
+                 minGSSize = 1,
+                 #readable = TRUE ,
+                 use_internal_data =FALSE)
+write.csv(as.data.frame(sclc_kegg@result), file="sclc_kegg.csv")
+
+barplot(sclc_kegg,showCategory =10)
+dotplot(sclc_kegg,showCategory =10)
+# plotGOgraph(sclc_kegg)
+edox = setReadable(sclc_kegg, 'org.Hs.eg.db', 'ENTREZID')
+cnetplot(edox, circular = TRUE, colorEdge = TRUE,showCategory = 6)
+
+```
+
+
+```{r KEGG bubble}
+dir()
+all=read.csv("sclc_kegg.csv",sep = ',',header = T,check.names = F) 
+all$GeneRatio=all$Count/95
+all=all[1:50,]
+p <- ggplot(data = all,mapping = aes(x = GeneRatio,y = Description))+
+  geom_point(aes(color= -log10(pvalue),size = Count)) +
+  scale_colour_gradient(high = 'red',low = 'green') +
+  theme_bw()+
+  theme(axis.title=element_text(face="bold", size=14,colour = 'black'),
+                 axis.text=element_text(face="bold", size=14,colour = 'black'), 
+                 axis.line = element_line(size=0.5, colour = 'black'), 
+                 panel.background = element_rect(color='black'), 
+                 legend.key = element_blank() )+
+  labs(title = 'KEGG_enrich',
+       x = 'Enrich_factor',
+       y = 'Description')
+ggsave(p,filename = "KEGG.png",width = 10,height = 15,dpi=300,limitsize = F)
+```
+
+
+```{r DESEq2}
+library(DESeq2)
+
+readcount=raw_df
+expgroup=data.frame(condition=rep('cell type',ncol(readcount)))
+expgroup$condition[c(1:391)]='A549'
+expgroup$condition[c(392:774)]='H460'
+expgroup$condition[c(775:1102)]='H1299'
+expgroup$condition[c(1103:1456)]='Calu3'
+expgroup$condition=as.factor(expgroup$condition)
+rownames(expgroup)=colnames(readcount)
+
+cds=DESeqDataSetFromMatrix(countData = readcount,colData = expgroup,design = ~condition)
+cds=estimateSizeFactors(cds)
+cds=estimateDispersions(cds)
+plotDispEsts(cds)
+dge=DESeq(cds,fitType = 'mean', minReplicatesForReplace = 7, parallel = T)
+res=results(dge)
+res1=data.frame(res, stringsAsFactors = F, check.names = F)
+write.table(res1, 'sclc.DESeq2.txt', col.names = NA, sep = '\t', quote = F)
+
+res1 = res1[order(res1$padj, res1$log2FoldChange, decreasing = c(F, T)), ]
+res1[which(res1$log2FoldChange >= 1 & res1$padj < 0.05),'sig'] <- 'up'
+res1[which(res1$log2FoldChange <= -1 & res1$padj < 0.05),'sig'] <- 'down'
+res1[which(abs(res1$log2FoldChange) <= 1 | res1$padj >= 0.05),'sig'] <- 'none'
+diffexpgenes=row.names(res1)[res1$padj<0.05&abs(res1$log2FoldChange)>=1]
+res1_select <- subset(res1, sig %in% c('up', 'down'))
+write.table(res1_select, file = 'control_treat.DESeq2.select.txt', sep = '\t', col.names = NA, quote = FALSE)
+
+normvalues=counts(cds,normalized=T)
+diffexpvalues=normvalues[rownames(normvalues)%in%diffexpgenes,]
+diffexpvalues_cor=cor(t(diffexpvalues))
+diffexpvalues_dist=as.dist(1-diffexpvalues_cor)
+diffexp_clust=hclust(diffexpvalues_dist,method ='average')
+plot(diffexp_clust)
+diffexp_clust_groups=cutree(diffexp_clust,k=8)
+table(diffexp_clust_groups)
+
+library(pheatmap)
+annotation_row=as.data.frame(diffexp_clust_groups) 
+annotation_col = data.frame(
+  category = as.character(expgroup$condition)
+)
+rownames(annotation_col) = colnames(diffexpvalues)
+pheatmap(diffexpvalues,
+               scale = 'row',
+               cluster_rows = T,
+               cluster_cols = F, 
+               show_rownames = F,
+               show_colnames = T,
+               fontsize_col = 10,
+               border=F,
+               annotation_row = annotation_row,
+               row_annotation_legend=T,
+               annotation_col = annotation_col)
+
+library(ggplot2)
+p <- ggplot(data = res1, aes(x = log2FoldChange, y = -log10(padj), color = sig)) +
+geom_point(size = 1) +  
+scale_color_manual(values = c('red', 'gray', 'green'), limits = c('up', 'none', 'down')) +
+labs(x = 'log2 Fold Change', y = '-log10 adjust p-value', title = 'control vs treat', color = '') + 
+theme(plot.title = element_text(hjust = 0.5, size = 14), panel.grid = element_blank(), 
+    panel.background = element_rect(color = 'black', fill = 'transparent'), 
+    legend.key = element_rect(fill = 'transparent')) +
+geom_vline(xintercept = c(-1, 1), lty = 3, color = 'black') +  
+geom_hline(yintercept = 2, lty = 3, color = 'black') +
+xlim(-12, 12) + ylim(0, 35) 
+
+p
+```
+
+
+```

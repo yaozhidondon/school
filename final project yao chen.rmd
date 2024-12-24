@@ -1,0 +1,40 @@
+---
+title: "final project"
+author: "yao chen"
+date: "12/18/2022"
+output: html_document
+---
+
+```{r}
+
+library(orthologr)
+library(biomartr)
+# download all coding sequences for covid
+covid_file <- biomartr::getCDS(organism = "GCF_009858895.2", path = getwd())
+# download all coding sequences for sars
+sars_file <- biomartr::getCDS(organism = "GCF_000864885.1", path = getwd())
+# compute dN/dS values for covid versus sars
+covid_vs_sars_dNdS <- dNdS(query_file = covid_file, subject_file = sars_file, delete_corrupt_cds = FALSE,
+       ortho_detection = "RBH", 
+       aa_aln_type     = "pairwise",
+       aa_aln_tool     = "NW", 
+       codon_aln_tool  = "pal2nal", 
+       dnds_est.method = "Comeron", 
+       comp_cores      = 1 )
+# store result in Excel readable csv file
+install.packages("readr")
+library(readr)
+readr::write_excel_csv(covid_vs_sars_dNdS, "covid_vs_sars_dNdS.csv")
+```
+
+
+```{r}
+
+orthologr:multi_aln(system.file("covid.fasta", package = 'orthologr'),
+          tool = "clustalw2", get_aln = TRUE)
+msa<-orthologr:multi_aln(system.file("sars.fasta", package = 'orthologr'),
+          tool = "clustalw2", get_aln = TRUE)
+library(ggmsa)
+
+ggmsa(msa, start = 10, end = 3500, char_width = 0.5, seq_name = TRUE) + geom_seqlogo() + geom_msaBar()
+```

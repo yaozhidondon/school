@@ -1,0 +1,278 @@
+---
+title: "assignment 9"
+author: "yao chen"
+date: "24/10/2020"
+output: html_document
+---
+
+### Three data files from two datasets, we will do both the mid-term project and the final project based on these datasets. Extra points (10% of total) for any insights outside of the questions asked.  All code submitted must contain annotations throughout, so if the code were stripped away, it will tell "a story" of what the program does and how it is designed. Should not be big essays, short comments, interspersed in the code) and the answers should be separately presented in a document. 
+
+```{}
+For the question asking for which pairs are most correlated, 
+
+the matrix has too many rows, so the cor matrix is too large (with 1000 genes, you have about half a million pairs) so remove the low expressed genes and then go through the pairs in a loop, keeping only the best pairs, this will make the calculation tractable
+
+
+For the question asking you to scale the columns. 
+
+The goal is to find a scaling factor for each column, so that applying (multiplying) the scaling factor to each element in the column makes  the total of that column a million. Why ? 
+
+We are going to deal with the idea of various kinds of scaling and normalization in a later lecture, but for now, the key idea of scaling is to make the numbers in each column somewhat comparable.  To give you an example, let us say for some reason, the overall signal was reduced during one measurement (either lower number of reads in a sequencing experiment, or else the intensity of light in a microarray experiment), this would artificially make the genes in that column appear to have lower intensity (And hence lower expression), which is not really the base.
+
+ f
+Even then, within a column (sample), the relative numbers between different rows is consistent, while between columns, things can be skewed by the "total expression". so scaling each column, so that the totals in each column are the same, makes them then comparable, or at least less dependent on things that influence the overall totals. 
+
+There is a scale function in R, you can apply it to each row, that basically does a z-transform, subtracting out the mean and then scaling by standard deviation (to make it a unit gaussian),  , but this is not useful if the initial scaling is not done, as the results will be skewed. So you cannot use that when you want to compare columns. You will use this when you make heat maps, as you will learn in an upcoming lecture. 
+
+Splitting genes into High, medium and low expressed genes. 
+
+One logical method of splitting the genes into low, medium and high expressed genes, might be to sort the totals for each row, and then pick "quantiles" that would leave 1/3 of genes in each interval. 
+
+So if you have say 100 genes, sort them by value,  and then find the value for the 33rd gene and the 66th genes. and those two values form the dividing points to decide if genes are high, medium or low.
+
+you could come up with more sophisticated methods, as long as you can justify the logic, it is fine there is no hard and fast rule for this division. 
+
+
+Sorting genes by variability
+
+we could use standard deviation as a metric to decide if genes have high/low variability, but then you might need to scale by the mean value to remove the effect of the mean, to measure it as a fraction of the mean.  Here maybe subtraction the mean might be helpful
+
+we could also look for the differences between aboral/oral and hope that the variations within a group are just noise and likely to be small. but this assumes there are no "outlier" samples.   you will see in the follow up questions (for the final project)  that clustering might tell you some samples might be better off excluded, as they are different from other members in the group. 
+
+```
+
+### Midterm
+
+### Dataset 1:  train.csv.gz
+### This is hand-written digits (0-9) from many people. It contains 785 columns, first columns is digit and the 784 remaining columns are pixels 0-783. These are essentially 28x28 squares, so you can map the 784 columns to entries in the squares. Each entry is 0-255, 0 is for black and 255 stands for white, numbers in between are shades of gray
+
+### 1) Read in the data and convert the pixel data into pictures using plot show a few examples in your report along with the code
+```{r}
+# read in data
+train <- read.csv('train.csv')
+```
+
+
+```{r}
+# create a function to show nth row image
+plot_number <- function(df, n) {
+  # use pixel values to create a 28*28 matrix represented by nth row
+  data = matrix(unlist(df[n, -1]), nrow = 28, ncol = 28, byrow = T)
+  # plot the matrix
+  image(data,col=grey.colors(255))
+}
+
+# execute the function to print and plot the 10th, 100th, and 1000th value
+print(train[10, 1])
+plot_number(train, 10)
+
+print(train[100, 1])
+plot_number(train, 100)
+
+print(train[1000, 1])
+plot_number(train, 1000)
+
+print(train[10000, 1])
+plot_number(train, 10000)
+```   
+### 2)  Separate the data by digits, and calculate average value of each pixel,
+
+```{r}
+library(dplyr)
+averages <- train %>% 
+group_by(label) %>%
+summarise(across(everything(), mean), .groups = "keep")
+
+averages
+```
+#### a)  Plot the average values, does it still resemble the digit label ?
+
+```{r}
+for(i in 1:10) {
+  plot_number(averages, i)
+}
+
+```
+#### b) which digits fare the best under this operation ?
+
+### 3) Find which columns have the most variance and which have the least.
+
+```{r}
+
+# calculate a function to find most and least n variance columns
+
+find_variance <- function(data, n) {
+ # calculate variance for all pixel columns
+  variances <- apply(X=data[,-1], MARGIN=2, FUN=var)
+  
+  # sort variance from large to small
+  sorted <- sort(variances, decreasing=TRUE, index.return=TRUE)
+  
+  # n most variance
+  most <- head(sorted$x, n)
+  print('...most variances...')
+  print(most)
+
+  # n least variance
+  least <- tail(sorted$x, n)
+  print('...least variances...')
+  print(least)
+}
+  
+```
+#### a) Over the whole dataset and then separately, for each digit (0-9)
+
+```{r}
+# for the whole database
+find_variance(train, 10)
+```
+
+```{r}
+# for each digit
+group_data <- function(data, n){
+  return(data[data$label == n, ])
+}
+
+for(i in 0:9) {
+  cat('for integer group', i, '\n')
+  group_data(train, i) %>%
+  find_variance(10)
+}
+```
+#### b) Can you connect the variance to the results in 2b ?
+#### c) Does replacing the columns with the lowest variability by their average value have an effect on the digits ?
+
+```{r}
+
+# make a copy of train
+
+data = train
+
+# find columns with variances of 0
+lowest_variability_cols <- which(apply(data, 2, var) == 0)
+lowest_variability_cols
+
+# replace those column value by the average
+data2 <- for(i in 1:ncol(data)){
+  data[lowest_variability_cols, i] <- mean(data[,i], na.rm = TRUE)
+}
+```
+#### d) How many columns have average values close to 255 or 0  and why ?
+```{r}
+# 
+# mean <- train %>% summarise_each(funs( mean( .,na.rm = TRUE)))
+# mean
+
+col_average <- colMeans(train[,-1], dims = 1) 
+average_sorted <- sort(col_average, decreasing=TRUE, index.return=TRUE)
+
+
+# library(dplyr)
+# new_frame<- filter(col_average %in% (3:7))
+# new_frame
+
+
+```
+
+### 4) On a graph paper (you can print your own at https://print-graph-paper.com), mark off 28 x 28 squares, write the digits (0-9) in these squares and "digitize" them, essentially add lines corresponding to your own handwriting to this set You should present a program that prints out digits in your handwriting. If you are ambitious, create a program to print your signature (not a statistic question, no bonus points for this)
+
+```{}
+What should we submit to answer the question? Are we supposed to generate a digit classifier from scratch in R code? If machine learning is involved, are we supposed to train the model with the data provided and to test it with our own handwriting image?  The question is very confusing.
+
+What should we submit to answer the question? Are we supposed to generate a digit classifier from scratch in R code? If machine learning is involved, are we supposed to train the model with the data provided and to test it with our own handwriting image?  The question is very confusing.
+
+We discussed Q1.4 in the class on Wednesday. one way to get your handwriting digitized is to take a picture and use that picture to convert it to the format of the data in the file given to you.
+
+at this point, you need to be able to read the information in the file and print out the digits encoded in them and perform some rudimentary checks on this, in the final project you will do some machine learning, but only using things you would learn in the latter part of the course.
+
+```
+
+
+### Dataset 2: a) Mnemiopsis_col_data.csv b) Mnemiopsis_count_data.csv
+
+### This is gene expression data,  The columns represent samples, whose information is in the col_data file. The count_data file contains counts for each gene (rows). The file, info_gene.txt contains information about the organism and some links to look up gene functions. It will be a good experience to learn to use the genome resources, as this is the kind of struggles most researchers go through when they start looking at genes.
+
+#### 1) What are the top 5 genes with the highest average expression (across experiments)  in the set ? what is their function ?
+
+```{r}
+
+de <- read.csv('Mnemiopsis_count_data_fixed.csv',header=TRUE) # read the csv gene expression file 
+x <- de[, c(2:9)]
+de$tot <- rowSums(x, na.rm=FALSE) #rowsums function to sum the expression data in each row.
+plot(density(de$tot)) #plot the sum of the expression to see the background noise. 
+
+de = de[de$tot > 0, ] # filtered away row rum equal to zero
+
+oral <- c('oral1', 'oral2', 'oral3', 'oral4')
+aboral <- c('aboral1', 'aboral2', 'aboral3', 'aboral4')
+tot <- c('oral1', 'oral2', 'oral3', 'oral4','aboral1', 'aboral2', 'aboral3', 'aboral4')
+de$oral_mean = rowMeans(subset(de, select = oral)) # row mean for oral
+de$aboral_mean = rowMeans(subset(de, select = aboral)) #row mean for aboral
+de$tot_mean = rowMeans(subset(de, select = tot)) #row mean for aboral
+
+de$diff = de$oral_mean - de$aboral_mean #mean difference between oral and aboral
+
+df1 <-de[order(-de$diff),] #sort the dataframe based on the abs gene expression difference in descending order
+head(df1,5)
+df2 <-de[order(-de$oral_mean),] #sort the dataframe based on the abs oral in descending order
+head(df2,5)
+df3 <-de[order(-de$aboral_mean),] #sort the dataframe based on the abs aboral in descending order
+head(df3,5)
+df4 <-de[order(-de$tot_mean),] #sort the dataframe based on the abs total in descending order
+head(df4,5)
+
+
+degene <- read.csv('Mnemiopsis_leidyi.MneLei_Aug2011.46.gff3',header=T,sep="\t")
+head(degene,5)
+```
+
+```{}
+The top 5 genes with the highest average expression among oral and aboral are:
+   ML20395a:  locomotion, GTP binding, GTPase activity
+   ML26358a: cytoskeleton organization, ATP binding
+   ML46651a: membrane attack complex
+   ML020045a: microtubule-based process, GTP binding
+   ML00017a: regulation of translational elongation, GTPase activity
+```
+
+#### 2) Are the top 5 genes different if they are done on a per column basis ?
+```{}
+
+df2 <-de[order(-de$oral_mean),] #sort the dataframe based on the abs oral in descending order
+head(df2,5)
+df3 <-de[order(-de$aboral_mean),] #sort the dataframe based on the abs aboral in descending order
+head(df3,5)
+
+## ML20395a:  locomotion, GTP binding, GTPase activity
+## ML26358a: cytoskeleton organization, ATP binding
+The two genes above are the highest expressed genes which are house keeping genes.
+```
+#### 3) Calculate mean and standard deviation of each column If the mean is different, then scale the columns so that they all have the same mean for the subsequent questions
+```{r}
+
+apply(x, MARGIN=2, FUN=mean)
+apply(x, MARGIN=2, FUN=sd)
+
+```
+
+
+#### 4) Use correlations between columns to find the samples that are closely related. Is this concordant with the column labels ?
+
+#### 5) Use correlations between rows to find the closest pairs (top 5) Are these close because they vary a lot between the groups you found in question 2  or are they close because they don't vary much ?
+
+#### 6) If you were forced to divide the genes in each column into high, medium and low count genes, how would you do this based on the data that you have ?
+
+#### 7) make a list of the top 5 genes with most variability and top 5 genes with least variability (exclude genes that have low expression values)
+
+#### 8) Using the labels of columns provided, find the top variable genes between the two groups using a t-test list the 5 most up regulated and 5 most  down regulated genes. What happens if you rank by p-value of the t-test ? would you exclude some of the high p-value genes for having low expression ?
+
+#### 8.1) Using the labels of columns provided, find the top variable genes between the two groups using a t-test list the 5 most up regulated and 5 most  down regulated genes. What happens if you rank by p-value of the t-test ? would you exclude some of these  genes for having low expression ?
+
+```{}
+I am wondering what 'high p-value genes' means. Does it mean numerical high p-value or numerical low with high significance p-value?
+
+
+Q2.8 sorry about this confusion, I have fixed the wording, 
+
+basically if you pick genes based on p-value (which means very low p-values), would you end up with some genes that have low expression values, making them not useful in terms of biology (this is a subjective matter in some sense, so a change in expression from 1 to 10 would be less desirable for further study compared to a gene that changes in expression from 100 to a 1000)
+```

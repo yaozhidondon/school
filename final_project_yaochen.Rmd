@@ -1,0 +1,288 @@
+---
+title: "final project"
+author: "yao chen"
+date: "11/29/2020"
+output: html_document
+---
+
+## • For dataset 1
+
+### 1) Use PCA to reduce dimensions. How many components do you need to keep reproducing the digits reasonably well? what is your final matrix?
+
+
+```{r}
+# PCA Summary
+digits <- read.csv('train.csv')   # read in data 
+digits.pca <- prcomp(digits[,-1]) # perform PCA analysis on all feature columns                                       
+# (summary(digits.pca))             # produce PCA summary report
+plot(digits.pca$x[,1:2], pch = as.character(digits$label), col = digits$label, main = "PCA Graph") # visualize digits on PCA
+
+
+# Cumulative Variances
+std <- digits.pca$sdev            # get standard deviation of all variables
+var <- std^2                      # square to get the variances
+coverage <- var/sum(var)          # get % of each variable of total variables
+
+plot(cumsum(coverage),            # plot cumulative variances graph
+     xlab = "# of Principal Component", 
+     xaxt="n",
+     ylab = "Cumulative Proportion of Variance Explained",
+     type = "b")
+
+axis(1, at = seq(0, 800, by = 50), las=2) # set axis
+
+# How many components do you need to keep reproducing the digits reasonably well?
+# n Components to Keep
+n = 250   # after that the percentage explained is not increased much
+
+points.default(x=n, y=sum(coverage[1:n]), type="p", pch=19, col="red", bg='red') # mark the first n components
+abline(v=n)     # add a vertical line at n components mark
+note <- paste( "% of total varainces explained",  sum(coverage[1:n]))
+text(x=350, y=0.8, label=note, col="red")  # add annotation text
+```
+
+```{r}
+# Final Reduced Matrix
+reduced_digits <- digits.pca$x[,1:n] %*% t(digits.pca$rotation[,1:n])  # reverse engineering the original data from PCA
+
+# create a function to show nth row image
+plot_number <- function(df, n) {
+  # use pixel values to create a 28*28 matrix represented by nth row
+  data = matrix(unlist(df[n, -1]), nrow = 28, ncol = 28, byrow = T)
+  # plot the matrix
+  image(data,col=grey.colors(255))
+}
+
+# Compare label value, original image, and PCA reduced image
+print(digits[10, 1])          # on 10th point
+plot_number(digits, 10)
+plot_number(reduced_digits, 10)
+
+print(digits[100, 1])        # on 100th points
+plot_number(digits, 100)
+plot_number(reduced_digits, 100)
+
+# Identify the most important loading scores
+loading_scores <- sort(abs(digits.pca$rotation[,1]), decreasing = TRUE)
+print('Top 10 Loading scores with highest importance')
+(names(loading_scores)[1:10])
+
+```
+
+### 2) Draw a tree of the pixels and see if you can explain the results based on geometry of the pixels (how far apart are they in the 2-d space). Try to Explain the PCA results in the lights of this.
+```{r}
+
+dist <- dist(x=digits[,-1][1:100, ], method = 'euclidean')
+hclust_avg <- hclust(dist, method = "average")
+
+plot(hclust_avg)
+
+# from the PCA result, we can tell, number 0,1,2,3,6,4,7 are all from a different cluster because they have quite distinct features. 8,9 digits are quite similar and cluster together.
+```
+
+
+
+
+### 3) Can you use some of the tools you have learnt to build a classifier, so if you get a new set of pixels you can predict what is in the picture. This is the start of a real project, but you don't have all the tools (such as neural networks) which might be more suited for this task. a. Split your dataset into two (a training set and a test set),
+```{r}
+
+# Split data into train and test set
+library(caTools)
+set.seed(42) 
+
+data <- digits.pca$x[, 1:n]
+data <- cbind(label=digits[, 1], data)
+data <- as.data.frame(data)
+
+sample = sample.split(data, SplitRatio = .8)
+train = subset(data, sample == TRUE)
+test  = subset(data, sample == FALSE)
+
+cat('Size of train data:', nrow(train), ';', 'Size of test data:', nrow((test)))
+
+```
+
+
+### b. Build your classifier and figure out how well it does with the test data in predicting the digits.
+```{r}
+
+# Random Forest
+library(randomForest)
+train_labels <- as.factor(train$label)  # convert label to string value
+summary(train_labels)                   # show distribution of each digits
+
+rf <- randomForest(x=train[, -1], y=train_labels, xtest=test[, -1], ytest=as.factor(test$label), 
+                   ntree=100, keep.forest=TRUE)  # apply random forest on data
+
+rf  # print out confusion matrix of train and test data
+
+```
+
+
+
+### c. Define the sensitivity and specificity of your classifier. How well does it recognize your own handwriting (make sure your handwriting is not in the training set)?
+```{r}
+set.seed(42) 
+
+own <- read.csv('test.csv')
+own <- own[sample(nrow(own), 3), ]
+
+plot_number(own, 1)
+plot_number(own, 2)
+plot_number(own, 3)
+
+own.pca <- predict(digits.pca, own)  # PCA transformed data
+prediction <- predict(rf, newdata = own.pca[,1:n], type = "class")
+print('Prediction:')
+prediction
+
+```
+
+## • For dataset 2
+### 1) Build hierarchical trees based on the columns
+```{r}
+col <- read.csv('Mnemiopsis_col_data.csv', header = TRUE)  # Read in data
+library(data.tree)
+col$pathString <- paste(col$type, col$condition, col$Sample, sep = "/")
+tree <- as.Node(col)
+tree
+
+```
+
+### 2) and for the rows (exclude rows that are "low" expression) Draw a heat map of the expression data
+```{r}
+# Read in Data and exclude low expression where tot is zero.
+de <- read.csv('Mnemiopsis_count_data_fixed.csv',header=TRUE) # read the csv gene expression file 
+x <- de[, c(2:9)]
+de$tot <- rowSums(x, na.rm=FALSE) #rowsums function to sum the expression data in each row.
+
+summary(de$tot)
+threshold = 10  #less than 10 is low expression
+
+de = de[de$tot > threshold, ] # filtered away low expression rows
+
+data <- as.matrix(de[, 2:9])
+heatmap(data)
+
+
+```
+
+### 3) Use DESeq2 to analyze this data
+```{r}
+library("DESeq2")
+library(ashr)
+library(ggplot2)
+# Import data from featureCounts
+countdata <- read.table("Mnemiopsis_count_data_fixed.csv", header=TRUE, row.names=1,sep=",")
+coldata <- read.table("Mnemiopsis_col_data.csv", header=TRUE, row.names=1,sep=",")
+countdata <- as.matrix(countdata)
+dds <- DESeqDataSetFromMatrix(countData=countdata, colData=coldata, design=~condition)
+# Run the DESeq pipeline
+dds <- DESeq(dds)
+#eliminate background from genes with low counts
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+
+#create a data frame for log fold change
+res.shrunk <- lfcShrink(dds,type='ashr',contrast = c("condition","aboral","oral"))
+#reorder the expression result based on log fold change and p value for down regulated gene
+res.shrunkOrdered <- res.shrunk[order(res.shrunk$pvalue),]
+res.shrunkOrdered
+
+##plot of p-values to historgram
+ggplot(as.data.frame(res.shrunkOrdered),aes(pvalue)) + geom_histogram(fill="light blue",color='black')
+
+#plot dispersion 
+dds <- estimateDispersions(dds,fitType = c("parametric"))
+plotDispEsts(dds)
+
+dds <- DESeq(dds)
+
+rawcounts.matrix <- counts(dds,normalized=F)
+normalizedcounts.matrix <- counts(dds,normalized=T)
+class(rawcounts.matrix)
+
+#plot hierarchical trees base on gene expression
+rld <- rlog(dds)
+dists <- dist(t(assay(rld)))
+plot(hclust(dists))
+
+res <- results(dds, contrast = c("condition","aboral","oral") )
+class(res)
+
+
+summary(res)
+
+
+res.shrunk <- lfcShrink(dds,type='ashr',contrast = c("condition","aboral","oral"))
+res.shrunkOrdered <- res.shrunk[order(res.shrunk$pvalue),]
+
+## MA plot to visualize differential expressed data.
+plotMA(res)
+
+# Get differential expression results, order by adjusted p-value for up regulated gene
+resSig <- subset(res.shrunkOrdered, log2FoldChange > 1 & padj < 0.05, )
+resSig
+
+#write in a tsv file
+write.table(as.data.frame(resSig), 
+          file="diff_exp_results.tsv",sep = "\t")
+```
+
+### a. Which are the most significantly changing genes in this dataset?
+
+```{}
+
+          baseMean log2FoldChange     lfcSE       pvalue         padj
+          <numeric>      <numeric> <numeric>    <numeric>    <numeric>
+ML087114a 15168.994      -12.92864  0.545820 7.55161e-131 1.07845e-126
+ML463533a   295.674       -5.46016  0.287760  5.74365e-81  3.91825e-77
+ML20265a    861.643       -7.28309  0.385393  8.23104e-81  3.91825e-77
+ML085213a  1265.181       -5.37231  0.284070  1.98648e-80  7.09224e-77
+ML01433a   9743.342       -5.69212  0.311210  1.80847e-75  5.16534e-72
+
+ML327424a  2892.591        8.48972  0.482911 9.40339e-71 1.34290e-67
+ML01051a    683.030        5.24370  0.299193 2.12123e-69 2.52444e-66
+ML00194a    350.125        3.65352  0.239206 5.27579e-53 3.42471e-50
+ML276914a   882.524        6.58346  0.514832 2.04179e-38 6.47975e-36
+ML030234a   876.621        5.18805  0.443682 3.28953e-32 7.57706e-30
+```
+
+
+
+
+### b. Which genes are most consistently highly expressed in these datasets that are the "house-keeping" genes?
+```{r}
+#sort the data based on base mean which log fold change are less than 0.5 in ascending order, 
+res.shrunkOrdered1 <- res.shrunk[order(res.shrunk$baseMean),]
+resSig1 <- subset(res.shrunkOrdered1, log2FoldChange <0.5)
+resSig1
+```
+
+### c. How consistent are these results with the analysis you did in the midterm project?
+```{}
+They are not consistent at all, the math to process the data and sort the data are different. However if you look at the low pvalue for highly express gene from midterm, ML050913a and ML329912a are also found in the deseq analysis data output based on p-value ranking. 
+
+```
+
+### d. What else can you say about the data in terms of consistency, and the results that you find from your analyses. The question is open-ended, think of this as your experiment, you need to write a paper based on this data so you have to figure out what kind of "story" you can tell based on this.
+```{}
+Deseq pipeline offer better statstistical significant and reliable result, the background noise are mostely removed by the pipeline and less human errors in data manipulation and clean up. 
+```
+
+### e. What is the most interesting pathway or gene that is responding in this study?
+```{}
+ ML00017a: regulation of translational elongation, GTPase activity 
+ ML020045a: microtubule-based process, GTP binding
+ ML26358a: cytoskeleton organization, ATP binding
+ ML020045a: microtubule-based process, GTP binding
+ ML20395a   120534.6    -0.03118465 0.0698372 0.2533207  0.599716
+ These are the highly expressed house keeping gene confirmed by the DESEQ analysis result and the midterm result. 
+
+Based on the DEseq analysis result 
+ML087114a gene is differentially express with base mean 15168.994, and log fold change of -13.11838, the p-adjusted value of 1.11260e-126 suggested this gene is differentially expreseed between oral and aboral. 
+
+ML087114a - protein 
+MKVLVLLVAALALSANGVNDETFRGRLNPGGTQAVENMMRDMIRRVNDLIKQHTRLNNMQ LGPVHVEGFNVRTLDTSNVNIIMTNNRLGVRVNNGRVHLTAQLAVYINILFGRIRVAGQF DTYGDAINAQLDTGLAVSGGRFRSQGMGCHLSVGRPRVDLHLPIINHLANMILQGLMPHV TNAVCNGVKMYGNGMVNSVFQSLPTNINVLNLFRLEFPVRNFRSWDRHMVAGVGMEVRPV NNQGVSYSGIRRLALPEAEDGHQACVTVSDFVANTASRTFLPVGKSFSVDVGSILKQFFG SIFNDKVFVQGTLTKSPEFLAEPEEFQFSVAASGRILDKDGNVVPGTETAPIEVVVRAPN NEDPMFSNVKVQVKGPINVTMNLNLSSIIDMLLKFVDDAFAGRGQVALQKRARNADIVRV INEMFLGRLFSGLRLAMSTRHGSVIVCLSGNPTSHATNIVYNALRRSFG
+```
+

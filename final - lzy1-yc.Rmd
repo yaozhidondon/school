@@ -1,0 +1,135 @@
+---
+title: "TR_FP_LZY"
+author: "lzy"
+date: "2022/3/3"
+output: html_document
+---
+```{r}
+BiocManager::install("org.Hs.eg.db")
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(org.Hs.eg.db)
+library(GEOquery)
+```
+
+```{r Loading the data}
+#gse<-getGEO('GSE183590')
+raw_df=read.table("GSE183590_Read_count_matrix_05092021.txt",header=T,sep="\t",row.names=1)
+rowname_raw_df=rownames(raw_df)
+list=select(org.Hs.eg.db,keys=rowname_raw_df,columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+list$uniSYMBOL=make.unique(list$SYMBOL,sep='-')
+list=list[!duplicated(list$ENSEMBL),]
+list$uniSYMBOL[is.na(list$uniSYMBOL)]='NA'
+# raw_df1=raw_df
+row.names(raw_df)=list$uniSYMBOL
+# grepl('MT',list$uniSYMBOL)%>%
+#   sum()
+# test=raw_df[grepl('MT',rownames(raw_df)),]
+# test
+# colnames(raw_df)<-c(rep("A549",391),rep("H460",383),rep("H1299",328),rep("Calu3",354))
+# H460=raw_df[,c(392:774)]
+# H1299=raw_df[,c(775:1102)]
+# Calu3=raw_df[,c(1103:1456)]
+
+```
+
+```{r}
+sclc<-CreateSeuratObject(counts = raw_df, project = "sclc", min.cells = 30,min.features = 400)
+head(sclc$RNA@data[,1:5])
+# test1=CreateSeuratObject(counts = test, project = "test", min.cells = 1,min.features = 1)
+
+# sclc1<-CreateSeuratObject(counts = raw_df1, project = "sclc", min.cells = 3,min.features = 200)
+```
+
+```{r main body}
+sclc[["percent.mt"]] <- PercentageFeatureSet(object = sclc, pattern = "^MT")
+# test1[["percent.mt"]] <- PercentageFeatureSet(object = test1,pattern = "^MT-")
+head(sclc@meta.data, 5)
+VlnPlot(object = sclc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+p1=FeatureScatter(object = sclc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+p2=FeatureScatter(object = sclc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+p1+p2
+
+sclc <- subset(x = sclc, subset = nFeature_RNA > 3000 & nFeature_RNA < 10000 & percent.mt < 5)
+sclc <- NormalizeData(object = sclc, normalization.method = "LogNormalize", scale.factor = 10000)
+sclc <- NormalizeData(object = sclc)
+sclc <- FindVariableFeatures(object = sclc, selection.method = "vst", nfeatures = 1000)
+top10 <- head(x = VariableFeatures(object = sclc), 10)
+plot1 <- VariableFeaturePlot(object = sclc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1
+plot2
+all.genes <- rownames(x = sclc)
+sclc <- ScaleData(object = sclc, features = all.genes)
+sclc <- RunPCA(object = sclc, features = VariableFeatures(object = sclc),npcs = dim(sclc)[2]-1)
+print(x = sclc[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(object = sclc, dims = 1:2, reduction = "pca")
+DimPlot(object = sclc, reduction = "pca")
+# DimHeatmap(object = sclc, dims = 1, cells = 200, balanced = TRUE)
+DimHeatmap(object = sclc, dims = 1:5, cells = 1000, balanced = TRUE)
+# Warning: Requested number is larger than the number of available items (109). Setting to 109.
+sclc <- JackStraw(object = sclc,num.replicate = 100) 
+sclc <- ScoreJackStraw(object = sclc, dims = 1:10)#subscript out of bounds
+JackStrawPlot(object = sclc, dims = 1:10)#Max dimension
+ElbowPlot(object = sclc)
+sclc <- FindNeighbors(object = sclc, dims = 1:9)
+sclc <- FindClusters(object = sclc, resolution = 0.8)
+head(x = Idents(object = sclc), 5)
+sclc <- RunUMAP(object = sclc, dims = 1:7)#n_neighbors must be smaller than the dataset size
+DimPlot(object = sclc, reduction = "umap")
+sclc.markers <- FindAllMarkers(object = sclc, only.pos = F, min.pct = 0.5, logfc.threshold = 0.8)#original arg is 0.25
+# Calculating cluster 0
+# Warning: No DE genes identified
+# Warning: The following tests were not performed: 
+# Warning: When testing 0 versus all:
+# 	Cell group 2 is empty - no cells with identity class 
+sclc_marker_table=sclc.markers %>% 
+  group_by(cluster) %>% 
+  slice_max(n = 50, order_by = abs(avg_log2FC))
+sclc_marker_table$gene
+VlnPlot(object = sclc, features = c("CXCL1","CXCL2"),slot = "counts", log = TRUE)
+FeaturePlot(object = sclc, features = c("CXCL1","CXCL2","COL5A2","ABCC2","ALDH1A2","CXCR2"))
+
+# sclc_raw_df=sclc
+```
+
+```{r gene name}
+
+list=select(org.Hs.eg.db,keys=sclc_marker_table$gene,columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+universeGeneIds=select(org.Hs.eg.db,keys=rownames(raw_df),columns = c("ENTREZID","SYMBOL"), keytype="ENSEMBL")
+# list$SYMBOL%in%universeGeneIds$SYMBOL
+```
+
+
+```{r}
+expvalues.cor = cor(raw_df, method="pearson")
+expvalues.dist = as.dist(1-expvalues.cor)
+expvalues.clust = hclust(expvalues.dist, method="ave")
+plot(expvalues.clust, cex=0.3)
+
+
+
+```
+
+
+```{r}
+
+anova3way.mk <- function(expvector, vector1, vector2, vector3, vector4){
+  v1 = factor(vector1)
+  v2 = factor(vector2)
+  v3 = factor(vector3)
+  v4 = factor(vector4)
+  temp.stats = numeric()
+  temp.lm=lm(expvector ~ v1* v2 * v3 * v4)
+  temp.fstat=summary(temp.lm)$fstatistic
+  temp.model.value = pf( temp.fstat[1] , temp.fstat[2] , temp.fstat[3] ,temp.fstat[4], lower.tail=F )
+  
+  return(temp.model.value)
+}
+
+maizeanovapvalues = apply(raw_df, 1, anova3way.mk, raw_df$A549, raw_df$H460, raw_df$H1299,raw_df$Calu3)
+maizeanovapvalues_fdr = p.adjust(maizeanovapvalues, method="fdr")
+siggenes = expvalues[(maizeanovapvalues_fdr<0.05),]
+dim(siggenes)
+```
